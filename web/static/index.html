@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>calTAD Annotation Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>calTAD Annotation Tool</h1>
+        <button id="logout-btn" onclick="logout()">Logout</button>
+    </header>
+
+    <main>
+        <div class="controls">
+            <div class="control-group">
+                <label for="file-upload" class="upload-btn">Upload Image</label>
+                <input type="file" id="file-upload" accept=".png,.jpg,.jpeg" style="display:none">
+
+                <select id="image-select">
+                    <option value="">Select Image...</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>View Type:</label>
+                <label class="radio-label">
+                    <input type="radio" name="view-type" value="ap" checked> AP
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="view-type" value="lateral"> Lateral
+                </label>
+            </div>
+        </div>
+
+        <div class="workspace">
+            <div class="canvas-container">
+                <canvas id="annotation-canvas"></canvas>
+                <div class="zoom-controls">
+                    <button onclick="zoomIn()">+</button>
+                    <button onclick="zoomOut()">-</button>
+                    <button onclick="resetView()">Reset</button>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="landmark-info">
+                    <h3>Current Landmark</h3>
+                    <div id="current-landmark">
+                        <span class="landmark-name">-</span>
+                        <span class="landmark-progress">(0/0)</span>
+                    </div>
+                    <p id="landmark-description">Select an image to begin</p>
+                </div>
+
+                <div class="landmark-list">
+                    <h3>Landmarks</h3>
+                    <ul id="landmarks-ul"></ul>
+                </div>
+
+                <div class="actions">
+                    <button id="undo-btn" onclick="undoLast()" disabled>Undo</button>
+                    <button id="save-btn" onclick="saveAnnotation()" disabled>Save</button>
+                </div>
+
+                <div class="status" id="status-message"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/annotate.js"></script>
+</body>
+</html>
