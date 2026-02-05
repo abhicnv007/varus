@@ -2,6 +2,7 @@
 FastAPI backend for calTAD landmark annotation tool.
 """
 import json
+import os
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -13,19 +14,20 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# Configuration
-USERNAME = "caltad"
-PASSWORD = "annotate123"  # Change before deployment
+# Configuration from environment variables
+USERNAME = os.environ.get("CALTAD_USERNAME", "caltad")
+PASSWORD = os.environ.get("CALTAD_PASSWORD", "annotate123")
 
-# Paths
+# Paths - use DATA_DIR env var for Railway volume mount
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
-UPLOADS_DIR = BASE_DIR / "uploads"
-ANNOTATIONS_DIR = BASE_DIR / "annotations"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR)))
+UPLOADS_DIR = DATA_DIR / "uploads"
+ANNOTATIONS_DIR = DATA_DIR / "annotations"
 
 # Ensure directories exist
-UPLOADS_DIR.mkdir(exist_ok=True)
-ANNOTATIONS_DIR.mkdir(exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="calTAD Annotation Tool")
 security = HTTPBasic()
@@ -173,3 +175,53 @@ async def list_annotations(username: str = Depends(verify_credentials)):
             "updated_at": data.get("updated_at"),
         })
     return {"annotations": annotations}
+
+
+@app.get("/status")
+async def get_status(username: str = Depends(verify_credentials)):
+    """Get annotation status for all images."""
+    # Get all images
+    images = []
+    for ext in ["*.png", "*.jpg", "*.jpeg"]:
+        images.extend([f.name for f in UPLOADS_DIR.glob(ext)])
+
+    # Build annotation lookup
+    annotation_map = {}
+    for f in ANNOTATIONS_DIR.glob("*.json"):
+        data = json.loads(f.read_text())
+        img_name = data.get("image_name")
+        view_type = data.get("view_type")
+        landmark_count = len(data.get("landmarks", {}))
+        if img_name not in annotation_map:
+            annotation_map[img_name] = {}
+        annotation_map[img_name][view_type] = {
+            "landmark_count": landmark_count,
+            "annotator": data.get("annotator"),
+            "updated_at": data.get("updated_at"),
+        }
+
+    # Build status for each image
+    status_list = []
+    for img in sorted(images):
+        ann = annotation_map.get(img, {})
+        status_list.append({
+            "image": img,
+            "ap": ann.get("ap"),
+            "lateral": ann.get("lateral"),
+            "complete": bool(ann.get("ap") and ann.get("lateral")),
+        })
+
+    total = len(images)
+    complete = sum(1 for s in status_list if s["complete"])
+    ap_done = sum(1 for s in status_list if s["ap"])
+    lateral_done = sum(1 for s in status_list if s["lateral"])
+
+    return {
+        "images": status_list,
+        "summary": {
+            "total_images": total,
+            "complete": complete,
+            "ap_annotated": ap_done,
+            "lateral_annotated": lateral_done,
+        }
+    }

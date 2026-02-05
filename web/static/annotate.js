@@ -41,6 +41,7 @@ let offsetY = 0;
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
+let statusData = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -62,8 +63,8 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('mouseleave', handleMouseUp);
 
-    // Load existing images
-    loadImageList();
+    // Load existing images and status
+    loadStatus();
     updateUI();
     resizeCanvas();
 
@@ -78,48 +79,94 @@ function resizeCanvas() {
 }
 
 // Image handling
-async function loadImageList() {
+async function loadStatus() {
     try {
-        const response = await fetch('/images');
-        const data = await response.json();
-        const select = document.getElementById('image-select');
-
-        // Clear existing options except first
-        while (select.options.length > 1) {
-            select.remove(1);
-        }
-
-        data.images.forEach(img => {
-            const option = document.createElement('option');
-            option.value = img;
-            option.textContent = img;
-            select.appendChild(option);
-        });
+        const response = await fetch('/status');
+        statusData = await response.json();
+        updateImageSelect();
+        updateProgressBar();
     } catch (error) {
-        showStatus('Failed to load images', 'error');
+        showStatus('Failed to load status', 'error');
     }
 }
 
-async function handleFileUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+function updateImageSelect() {
+    const select = document.getElementById('image-select');
+    const currentValue = select.value;
 
-    const formData = new FormData();
-    formData.append('file', file);
+    // Clear existing options except first
+    while (select.options.length > 1) {
+        select.remove(1);
+    }
+
+    if (!statusData) return;
+
+    statusData.images.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.image;
+
+        // Build status indicator
+        let status = '';
+        if (item.complete) {
+            status = ' [AP+LAT]';
+        } else if (item.ap && item.lateral) {
+            status = ' [AP+LAT]';
+        } else if (item.ap) {
+            status = ' [AP]';
+        } else if (item.lateral) {
+            status = ' [LAT]';
+        }
+
+        option.textContent = item.image + status;
+        select.appendChild(option);
+    });
+
+    // Restore selection if still valid
+    if (currentValue) {
+        select.value = currentValue;
+    }
+}
+
+function updateProgressBar() {
+    if (!statusData) return;
+
+    const { summary } = statusData;
+    const pct = summary.total_images > 0
+        ? Math.round((summary.complete / summary.total_images) * 100)
+        : 0;
+
+    document.getElementById('progress-complete').textContent =
+        `${summary.complete}/${summary.total_images} complete`;
+    document.getElementById('progress-ap').textContent =
+        `AP: ${summary.ap_annotated}`;
+    document.getElementById('progress-lateral').textContent =
+        `Lateral: ${summary.lateral_annotated}`;
+    document.getElementById('progress-fill').style.width = `${pct}%`;
+}
+
+async function handleFileUpload(e) {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
 
     try {
-        showStatus('Uploading...', 'info');
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData,
-        });
+        showStatus(`Uploading ${files.length} file(s)...`, 'info');
 
-        if (!response.ok) throw new Error('Upload failed');
+        for (const file of files) {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
+        }
 
-        await loadImageList();
-        document.getElementById('image-select').value = file.name;
-        await loadImage(file.name);
-        showStatus('Image uploaded', 'success');
+        await loadStatus();
+
+        // Select the first uploaded file
+        document.getElementById('image-select').value = files[0].name;
+        await loadImage(files[0].name);
+        showStatus(`${files.length} file(s) uploaded`, 'success');
     } catch (error) {
         showStatus('Upload failed', 'error');
     }
@@ -374,6 +421,8 @@ async function saveAnnotation() {
 
         if (!response.ok) throw new Error('Save failed');
 
+        // Refresh status to update progress
+        await loadStatus();
         showStatus('Annotation saved!', 'success');
     } catch (error) {
         showStatus('Failed to save', 'error');

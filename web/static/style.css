@@ -43,6 +43,42 @@ main {
     padding: 1rem 2rem;
 }
 
+.progress-bar {
+    background: #16213e;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.progress-stats {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.progress-stats span {
+    color: #aaa;
+}
+
+#progress-complete {
+    color: #4ade80;
+    font-weight: bold;
+}
+
+.progress-track {
+    background: #0f0f23;
+    border-radius: 4px;
+    height: 8px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    background: linear-gradient(90deg, #4ade80, #22c55e);
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
 .controls {
     display: flex;
     gap: 2rem;
@@ -88,7 +124,7 @@ select {
 .workspace {
     display: flex;
     gap: 1rem;
-    height: calc(100vh - 160px);
+    height: calc(100vh - 220px);
 }
 
 .canvas-container {

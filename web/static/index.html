@@ -13,10 +13,21 @@
     </header>
 
     <main>
+        <div class="progress-bar">
+            <div class="progress-stats">
+                <span id="progress-complete">0/0 complete</span>
+                <span id="progress-ap">AP: 0</span>
+                <span id="progress-lateral">Lateral: 0</span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
+
         <div class="controls">
             <div class="control-group">
                 <label for="file-upload" class="upload-btn">Upload Image</label>
-                <input type="file" id="file-upload" accept=".png,.jpg,.jpeg" style="display:none">
+                <input type="file" id="file-upload" accept=".png,.jpg,.jpeg" style="display:none" multiple>
 
                 <select id="image-select">
                     <option value="">Select Image...</option>
