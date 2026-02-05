@@ -11,6 +11,5 @@ build/
 .mypy_cache/
 samples/
 web/uploads/*
-web/annotations/*
+web/*.db
 !web/uploads/.gitkeep
-!web/annotations/.gitkeep

@@ -1,5 +1,5 @@
 /**
- * calTAD Landmark Annotation Tool
+ * calTAD Landmark Annotation Tool - Patient-centric workflow
  */
 
 // Landmark definitions
@@ -31,7 +31,8 @@ const COLORS = [
 // State
 let canvas, ctx;
 let image = null;
-let imageName = null;
+let currentPatient = null;
+let currentPatientData = null;
 let viewType = 'ap';
 let annotations = {};
 let currentLandmarkIndex = 0;
@@ -50,10 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Event listeners
     document.getElementById('file-upload').addEventListener('change', handleFileUpload);
-    document.getElementById('image-select').addEventListener('change', handleImageSelect);
-    document.querySelectorAll('input[name="view-type"]').forEach(radio => {
-        radio.addEventListener('change', handleViewTypeChange);
-    });
+    document.getElementById('patient-select').addEventListener('change', handlePatientSelect);
 
     // Canvas events
     canvas.addEventListener('click', handleCanvasClick);
@@ -63,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('mouseleave', handleMouseUp);
 
-    // Load existing images and status
+    // Load data
     loadStatus();
     updateUI();
     resizeCanvas();
@@ -78,50 +76,48 @@ function resizeCanvas() {
     render();
 }
 
-// Image handling
+// Data loading
 async function loadStatus() {
     try {
         const response = await fetch('/status');
         statusData = await response.json();
-        updateImageSelect();
+        updatePatientSelect();
         updateProgressBar();
     } catch (error) {
-        showStatus('Failed to load status', 'error');
+        showStatus('Failed to load data', 'error');
     }
 }
 
-function updateImageSelect() {
-    const select = document.getElementById('image-select');
+function updatePatientSelect() {
+    const select = document.getElementById('patient-select');
     const currentValue = select.value;
 
-    // Clear existing options except first
     while (select.options.length > 1) {
         select.remove(1);
     }
 
     if (!statusData) return;
 
-    statusData.images.forEach(item => {
+    statusData.patients.forEach(p => {
         const option = document.createElement('option');
-        option.value = item.image;
+        option.value = p.id;
 
-        // Build status indicator
         let status = '';
-        if (item.complete) {
-            status = ' [AP+LAT]';
-        } else if (item.ap && item.lateral) {
-            status = ' [AP+LAT]';
-        } else if (item.ap) {
-            status = ' [AP]';
-        } else if (item.lateral) {
-            status = ' [LAT]';
+        if (p.complete) {
+            status = ' [Complete]';
+        } else if (p.ap_annotated || p.lateral_annotated) {
+            const parts = [];
+            if (p.ap_annotated) parts.push('AP');
+            if (p.lateral_annotated) parts.push('LAT');
+            status = ` [${parts.join('+')}]`;
+        } else if (p.has_ap || p.has_lateral) {
+            status = ' [Images uploaded]';
         }
 
-        option.textContent = item.image + status;
+        option.textContent = p.name + status;
         select.appendChild(option);
     });
 
-    // Restore selection if still valid
     if (currentValue) {
         select.value = currentValue;
     }
@@ -130,74 +126,139 @@ function updateImageSelect() {
 function updateProgressBar() {
     if (!statusData) return;
 
-    const { summary } = statusData;
-    const pct = summary.total_images > 0
-        ? Math.round((summary.complete / summary.total_images) * 100)
+    const { stats } = statusData;
+    const pct = stats.total_patients > 0
+        ? Math.round((stats.complete / stats.total_patients) * 100)
         : 0;
 
     document.getElementById('progress-complete').textContent =
-        `${summary.complete}/${summary.total_images} complete`;
+        `${stats.complete}/${stats.total_patients} complete`;
     document.getElementById('progress-ap').textContent =
-        `AP: ${summary.ap_annotated}`;
+        `AP: ${stats.ap_annotated}`;
     document.getElementById('progress-lateral').textContent =
-        `Lateral: ${summary.lateral_annotated}`;
+        `Lateral: ${stats.lateral_annotated}`;
     document.getElementById('progress-fill').style.width = `${pct}%`;
 }
 
-async function handleFileUpload(e) {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-
-    try {
-        showStatus(`Uploading ${files.length} file(s)...`, 'info');
-
-        for (const file of files) {
-            const formData = new FormData();
-            formData.append('file', file);
-            const response = await fetch('/upload', {
-                method: 'POST',
-                body: formData,
-            });
-            if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
-        }
-
-        await loadStatus();
-
-        // Select the first uploaded file
-        document.getElementById('image-select').value = files[0].name;
-        await loadImage(files[0].name);
-        showStatus(`${files.length} file(s) uploaded`, 'success');
-    } catch (error) {
-        showStatus('Upload failed', 'error');
-    }
-
-    e.target.value = '';
-}
-
-async function handleImageSelect(e) {
-    const name = e.target.value;
-    if (name) {
-        await loadImage(name);
-    }
-}
-
-async function loadImage(name) {
-    imageName = name;
-    image = new Image();
-    image.onload = async () => {
-        resetView();
-        await loadExistingAnnotation();
+// Patient handling
+async function handlePatientSelect(e) {
+    const patientId = e.target.value;
+    if (patientId) {
+        await loadPatient(parseInt(patientId));
+    } else {
+        currentPatient = null;
+        currentPatientData = null;
+        image = null;
+        document.getElementById('view-controls').style.display = 'none';
+        document.getElementById('patient-info').style.display = 'none';
+        updateUI();
         render();
-    };
-    image.src = `/images/${name}`;
+    }
+}
+
+async function loadPatient(patientId) {
+    try {
+        const response = await fetch(`/patients/${patientId}`);
+        if (!response.ok) throw new Error('Failed to load patient');
+
+        currentPatientData = await response.json();
+        currentPatient = currentPatientData.patient;
+
+        document.getElementById('view-controls').style.display = 'flex';
+        document.getElementById('patient-info').style.display = 'block';
+        document.getElementById('patient-name').textContent = currentPatient.name;
+
+        updatePatientStatus();
+        await loadCurrentView();
+    } catch (error) {
+        showStatus('Failed to load patient', 'error');
+    }
+}
+
+function updatePatientStatus() {
+    if (!currentPatientData) return;
+
+    const images = currentPatientData.images;
+    const apImage = images.find(i => i.view_type === 'ap');
+    const lateralImage = images.find(i => i.view_type === 'lateral');
+
+    // Update status badges
+    const apBadge = document.getElementById('status-ap');
+    const lateralBadge = document.getElementById('status-lateral');
+
+    if (apImage?.has_annotation) {
+        apBadge.textContent = 'AP: Done';
+        apBadge.className = 'status-badge annotated';
+    } else if (apImage) {
+        apBadge.textContent = 'AP: Uploaded';
+        apBadge.className = 'status-badge uploaded';
+    } else {
+        apBadge.textContent = 'AP: -';
+        apBadge.className = 'status-badge';
+    }
+
+    if (lateralImage?.has_annotation) {
+        lateralBadge.textContent = 'Lateral: Done';
+        lateralBadge.className = 'status-badge annotated';
+    } else if (lateralImage) {
+        lateralBadge.textContent = 'Lateral: Uploaded';
+        lateralBadge.className = 'status-badge uploaded';
+    } else {
+        lateralBadge.textContent = 'Lateral: -';
+        lateralBadge.className = 'status-badge';
+    }
+
+    // Update view buttons
+    const btnAp = document.getElementById('btn-ap');
+    const btnLateral = document.getElementById('btn-lateral');
+
+    btnAp.classList.toggle('has-image', !!apImage);
+    btnAp.classList.toggle('annotated', !!apImage?.has_annotation);
+    btnLateral.classList.toggle('has-image', !!lateralImage);
+    btnLateral.classList.toggle('annotated', !!lateralImage?.has_annotation);
+}
+
+async function selectView(view) {
+    viewType = view;
+
+    document.getElementById('btn-ap').classList.toggle('active', view === 'ap');
+    document.getElementById('btn-lateral').classList.toggle('active', view === 'lateral');
+
+    await loadCurrentView();
+}
+
+async function loadCurrentView() {
+    if (!currentPatientData) return;
+
+    const images = currentPatientData.images;
+    const currentImage = images.find(i => i.view_type === viewType);
+
+    if (currentImage) {
+        // Load image
+        image = new Image();
+        image.onload = async () => {
+            resetView();
+            await loadExistingAnnotation();
+            render();
+        };
+        image.src = `/images/${currentImage.filename}`;
+    } else {
+        image = null;
+        annotations = {};
+        currentLandmarkIndex = 0;
+        updateUI();
+        render();
+    }
 }
 
 async function loadExistingAnnotation() {
     annotations = {};
     currentLandmarkIndex = 0;
 
+    if (!currentPatient) return;
+
     try {
-        const response = await fetch(`/annotations/${imageName}?view_type=${viewType}`);
+        const response = await fetch(`/annotations/${currentPatient.id}/${viewType}`);
         if (response.ok) {
             const data = await response.json();
             annotations = data.landmarks || {};
@@ -221,12 +282,82 @@ async function loadExistingAnnotation() {
     updateUI();
 }
 
-function handleViewTypeChange(e) {
-    viewType = e.target.value;
-    if (imageName) {
-        loadExistingAnnotation();
-    } else {
-        updateUI();
+// File upload
+async function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file || !currentPatient) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patient_id', currentPatient.id);
+    formData.append('view_type', viewType);
+
+    try {
+        showStatus('Uploading...', 'info');
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Upload failed');
+        }
+
+        // Reload patient data
+        await loadPatient(currentPatient.id);
+        await loadStatus();
+        showStatus('Image uploaded', 'success');
+    } catch (error) {
+        showStatus(error.message || 'Upload failed', 'error');
+    }
+
+    e.target.value = '';
+}
+
+// Patient modal
+function showAddPatientModal() {
+    document.getElementById('add-patient-modal').classList.add('show');
+    document.getElementById('patient-name-input').focus();
+}
+
+function hideAddPatientModal() {
+    document.getElementById('add-patient-modal').classList.remove('show');
+    document.getElementById('add-patient-form').reset();
+}
+
+async function addPatient(e) {
+    e.preventDefault();
+
+    const name = document.getElementById('patient-name-input').value.trim();
+    const notes = document.getElementById('patient-notes-input').value.trim();
+
+    if (!name) return;
+
+    try {
+        showStatus('Adding patient...', 'info');
+        const response = await fetch('/patients', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, notes: notes || null }),
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to add patient');
+        }
+
+        const data = await response.json();
+        hideAddPatientModal();
+        await loadStatus();
+
+        // Select the new patient
+        document.getElementById('patient-select').value = data.id;
+        await loadPatient(data.id);
+
+        showStatus('Patient added', 'success');
+    } catch (error) {
+        showStatus(error.message || 'Failed to add patient', 'error');
     }
 }
 
@@ -241,11 +372,9 @@ function handleCanvasClick(e) {
     const canvasX = e.clientX - rect.left;
     const canvasY = e.clientY - rect.top;
 
-    // Convert to image coordinates
     const imgX = (canvasX - offsetX) / scale;
     const imgY = (canvasY - offsetY) / scale;
 
-    // Check bounds
     if (imgX < 0 || imgX > image.width || imgY < 0 || imgY > image.height) {
         return;
     }
@@ -268,7 +397,6 @@ function handleWheel(e) {
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(10, scale * zoomFactor));
 
-    // Zoom toward mouse position
     offsetX = mouseX - (mouseX - offsetX) * (newScale / scale);
     offsetY = mouseY - (mouseY - offsetY) * (newScale / scale);
     scale = newScale;
@@ -331,7 +459,6 @@ function resetView() {
         return;
     }
 
-    // Fit image to canvas with padding
     const padding = 40;
     const scaleX = (canvas.width - padding * 2) / image.width;
     const scaleY = (canvas.height - padding * 2) / image.height;
@@ -347,11 +474,19 @@ function resetView() {
 function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    if (!currentPatient) {
+        ctx.fillStyle = '#888';
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Select a patient to begin', canvas.width / 2, canvas.height / 2);
+        return;
+    }
+
     if (!image) {
         ctx.fillStyle = '#888';
         ctx.font = '16px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('Upload or select an image to begin', canvas.width / 2, canvas.height / 2);
+        ctx.fillText(`Upload ${viewType.toUpperCase()} image for this patient`, canvas.width / 2, canvas.height / 2);
         return;
     }
 
@@ -371,7 +506,6 @@ function render() {
             const y = point.y * scale + offsetY;
             const color = COLORS[i % COLORS.length];
 
-            // Draw marker
             ctx.beginPath();
             ctx.arc(x, y, 8, 0, Math.PI * 2);
             ctx.fillStyle = color;
@@ -380,7 +514,6 @@ function render() {
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Draw number
             ctx.fillStyle = 'white';
             ctx.font = 'bold 10px sans-serif';
             ctx.textAlign = 'center';
@@ -403,10 +536,10 @@ function undoLast() {
 }
 
 async function saveAnnotation() {
-    if (!imageName) return;
+    if (!currentPatient || !image) return;
 
     const data = {
-        image_name: imageName,
+        patient_id: currentPatient.id,
         view_type: viewType,
         landmarks: annotations,
     };
@@ -421,7 +554,8 @@ async function saveAnnotation() {
 
         if (!response.ok) throw new Error('Save failed');
 
-        // Refresh status to update progress
+        // Reload to update status
+        await loadPatient(currentPatient.id);
         await loadStatus();
         showStatus('Annotation saved!', 'success');
     } catch (error) {
@@ -430,7 +564,6 @@ async function saveAnnotation() {
 }
 
 function logout() {
-    // Clear auth by making request with wrong credentials
     const xhr = new XMLHttpRequest();
     xhr.open('GET', '/', true, 'logout', 'logout');
     xhr.onreadystatechange = () => {
@@ -448,7 +581,6 @@ function updateUI() {
     const currentDiv = document.getElementById('current-landmark');
     const descriptionP = document.getElementById('landmark-description');
 
-    // Update landmarks list
     landmarksList.innerHTML = '';
     landmarks.forEach((landmark, i) => {
         const li = document.createElement('li');
@@ -471,8 +603,19 @@ function updateUI() {
         landmarksList.appendChild(li);
     });
 
-    // Update current landmark info
-    if (currentLandmarkIndex < landmarks.length) {
+    if (!currentPatient) {
+        currentDiv.innerHTML = `
+            <span class="landmark-name">-</span>
+            <span class="landmark-progress">(0/0)</span>
+        `;
+        descriptionP.textContent = 'Select a patient to begin';
+    } else if (!image) {
+        currentDiv.innerHTML = `
+            <span class="landmark-name">-</span>
+            <span class="landmark-progress">(0/${landmarks.length})</span>
+        `;
+        descriptionP.textContent = `Upload ${viewType.toUpperCase()} image first`;
+    } else if (currentLandmarkIndex < landmarks.length) {
         const current = landmarks[currentLandmarkIndex];
         currentDiv.innerHTML = `
             <span class="landmark-name">${current.name}</span>
@@ -487,9 +630,8 @@ function updateUI() {
         descriptionP.textContent = 'All landmarks annotated. Click Save to store.';
     }
 
-    // Update buttons
     document.getElementById('undo-btn').disabled = currentLandmarkIndex === 0;
-    document.getElementById('save-btn').disabled = Object.keys(annotations).length === 0;
+    document.getElementById('save-btn').disabled = !image || Object.keys(annotations).length === 0;
 }
 
 function showStatus(message, type) {
